@@ -1,0 +1,12 @@
+﻿librosa
+numpy
+pandas
+scikit-learn
+matplotlib
+streamlit
+soundfile
+joblib
+numpy
+
+
+
