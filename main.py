@@ -1,92 +1,66 @@
-﻿# main.py
-import os
+﻿import streamlit as st
+import pickle
 import numpy as np
-import pandas as pd
 import librosa
-import soundfile as sf
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
-import joblib
+import os
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Path to audio dataset
-DATA_PATH = "data/"
-MODEL_PATH = "models/emotion_model.pkl"
+# ------------------ Load Model ------------------
+@st.cache_resource
+def load_model():
+    model_path = os.path.join("models", "emotion_model.pkl")
+    vectorizer_path = os.path.join("models", "vectorizer.pkl")
 
-# Map RAVDESS emotion codes to labels
-EMOTIONS = {
-    "01": "neutral",
-    "02": "calm",
-    "03": "happy",
-    "04": "sad",
-    "05": "angry",
-    "06": "fearful",
-    "07": "disgust",
-    "08": "surprised"
-}
+    with open(model_path, "rb") as f:
+        model = pickle.load(f)
+    with open(vectorizer_path, "rb") as f:
+        vectorizer = pickle.load(f)
+    return model, vectorizer
 
-def extract_emotion(filename):
-    emotion_code = filename.split("-")[2]
-    return EMOTIONS.get(emotion_code, "unknown")
+model, vectorizer = load_model()
 
-def extract_features(file_path):
-    X, sample_rate = librosa.load(file_path, res_type='kaiser_fast')
-    # MFCC
-    mfccs = np.mean(librosa.feature.mfcc(y=X, sr=sample_rate, n_mfcc=40).T, axis=0)
-    # Chroma
-    stft = np.abs(librosa.stft(X))
-    chroma = np.mean(librosa.feature.chroma_stft(S=stft, sr=sample_rate).T, axis=0)
-    # Mel Spectrogram
-    mel = np.mean(librosa.feature.melspectrogram(y=X, sr=sample_rate).T, axis=0)
-    return np.concatenate((mfccs, chroma, mel))
+# ------------------ Page Layout ------------------
+st.set_page_config(page_title="Emotion Detection App", layout="centered")
+st.markdown("<h1 style='text-align: center; color: white;'>🧠 Emotion Detection App</h1>", unsafe_allow_html=True)
+st.success("Model loaded successfully!")
 
-# Extract features and labels
-features_list = []
-labels = []
+# ------------------ Mode Selection ------------------
+mode = st.radio("Choose Input Type:", ["Text Input", "Voice Input"])
 
-for root, dirs, files in os.walk(DATA_PATH):
-    for file in files:
-        if file.endswith(".wav"):
-            file_path = os.path.join(root, file)
-            emotion = extract_emotion(file)
+# ------------------ Text Emotion Prediction ------------------
+if mode == "Text Input":
+    text_input = st.text_area("Enter your text here:")
+    if st.button("Predict Emotion"):
+        if text_input.strip() != "":
+            X = vectorizer.transform([text_input])
+            prediction = model.predict(X)[0]
+            st.success(f"Predicted Emotion: **{prediction.upper()}**")
+        else:
+            st.warning("Please enter some text!")
+
+# ------------------ Voice Emotion Prediction ------------------
+elif mode == "Voice Input":
+    st.write("🎤 Record or Upload an audio file (in WAV format)")
+
+    audio_file = st.file_uploader("Upload your voice file:", type=["wav"])
+
+    if audio_file is not None:
+        file_path = os.path.join("data", "uploaded_audio.wav")
+        with open(file_path, "wb") as f:
+            f.write(audio_file.getbuffer())
+        st.audio(file_path, format="audio/wav")
+
+        if st.button("Predict Emotion from Voice"):
             try:
-                feature = extract_features(file_path)
-                features_list.append(feature)
-                labels.append(emotion)
+                # Load and extract features
+                y, sr = librosa.load(file_path, duration=3, offset=0.5)
+                mfccs = np.mean(librosa.feature.mfcc(y=y, sr=sr, n_mfcc=40).T, axis=0)
+
+                # Convert to model input
+                features = mfccs.reshape(1, -1)
+                voice_prediction = model.predict(features)[0]
+
+                st.success(f"Predicted Emotion from Voice: **{voice_prediction.upper()}**")
+
             except Exception as e:
-                print(f"Error processing {file_path}: {e}")
-
-print(f"Total files found: {len(features_list)}")
-
-
-# Convert to numpy arrays
-X = np.array(features_list)
-y = np.array(labels)
-
-# Encode labels
-le = LabelEncoder()
-y_encoded = le.fit_transform(y)
-
-# Split dataset
-X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
-
-# Train classifier
-clf = RandomForestClassifier(n_estimators=100, random_state=42)
-clf.fit(X_train, y_train)
-
-# Save model
-os.makedirs("models", exist_ok=True)
-joblib.dump(clf, MODEL_PATH)
-print(f"Model saved at {MODEL_PATH}")
-
-# Evaluate
-y_pred = clf.predict(X_test)
-print("Accuracy:", accuracy_score(y_test, y_pred))
-print("Classification Report:\n", classification_report(y_test, y_pred, target_names=le.classes_))
-
-# Test single file (optional)
-# test_file = "data/test.wav"
-# feature = extract_features(test_file).reshape(1, -1)
-# pred = le.inverse_transform(clf.predict(feature))
-# print(f"Predicted Emotion for {test_file}: {pred[0]}")
+                st.error(f"Error processing the audio file: {e}")
